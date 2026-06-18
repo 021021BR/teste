@@ -254,6 +254,7 @@ body {
   font-variant-numeric: tabular-nums;
 }
 .tempo-valor.positivo { color: var(--green); }
+.tempo-valor.baixo { color: var(--yellow); }
 .tempo-valor.negativo { color: var(--red); }
 .tempo-valor.zero { color: var(--text2); }
 .tempo-label { display: none; }
@@ -594,7 +595,7 @@ select option { background: var(--surface); }
       </div>
     </div>
     <div class="topbar-right">
-      <span style="font-size:10px;color:var(--text3);font-weight:500">v0.17</span>
+      <span style="font-size:10px;color:var(--text3);font-weight:500">v0.23</span>
 <button class="icon-btn" onclick="fazerLogout()" title="Sair" style="display:flex;align-items:center;justify-content:center">
   <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
     <path d="M5 3C3.9 3 3 3.9 3 5v14c0 1.1.9 2 2 2h7v-2H5V5h7V3H5z"/>
@@ -909,6 +910,7 @@ let currentFamiliaId = null;
 let currentUserId = null;
 let filhosData = {};
 let pedidosData = {};
+let tarefasData = {};
 let unsubscribers = [];
 const CORES_CHAT = ['#3b82f6','#a855f7','#22c55e','#f59e0b','#ef4444','#06b6d4','#ec4899','#f97316'];
 function corDoUsuario(uid) {
@@ -1038,6 +1040,7 @@ function iniciarListeners() {
   );
   const u3 = onSnapshot(tarefaQ, snap => {
     const tarefas = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    tarefas.forEach(t => { tarefasData[t.id] = t; });
     renderTarefas(tarefas);
   });
   unsubscribers.push(u3);
@@ -1137,7 +1140,7 @@ function renderFilhos(filhos) {
         </button>
       </div>
       <div class="tempo-display">
-        <div class="tempo-valor ${tempoSeg > 300 ? 'positivo' : tempoSeg <= 0 ? 'zero' : 'negativo'}" data-tempo-uid="${f.uid}">${tempoStr}</div>
+        <div class="tempo-valor ${tempoSeg > 600 ? 'positivo' : tempoSeg > 300 ? 'baixo' : tempoSeg <= 0 ? 'zero' : 'negativo'}" data-tempo-uid="${f.uid}">${tempoStr}</div>
         <div class="tempo-label">tempo disponível</div>
         ${rodando ? '<div class="timer-indicator"><div class="timer-dot"></div>Descontando agora</div>' : ''}
       </div>
@@ -1169,7 +1172,7 @@ function formatarTempo(segundos) {
   const m = Math.floor((abs % 3600) / 60);
   const s = abs % 60;
   const neg = segundos < 0 ? '-' : '';
-  if (h > 0) return `${neg}${h}h ${String(m).padStart(2,'0')}m`;
+  if (h > 0) return `${neg}${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
   return `${neg}${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
 }
 
@@ -1269,9 +1272,38 @@ function renderTarefas(tarefas) {
         <div class="tempo-chip ganho">✅ +${formatarMin(t.tempoGanho)}</div>
         <div class="tempo-chip perde">❌ -${formatarMin(t.tempoPerde)}</div>
       </div>
+      ${statusHoje === 'cumprida' ? `
+      <div class="missao-actions" style="margin-top:10px">
+        <button class="btn-small btn-red" style="flex:1" onclick="reprovarTarefa('${t.id}','${t.filhoId}')">❌ Reprovar tarefa</button>
+      </div>` : ''}
     </div>`;
   }).join('');
 }
+
+window.reprovarTarefa = async function(tarefaId, filhoId) {
+  const t = tarefasData[tarefaId];
+  if (!t) return;
+  const field = `statusHoje.${new Date().toDateString()}`;
+  await updateDoc(doc(db, 'tarefas_diarias', tarefaId), { [field]: 'nao_cumprida' });
+  const total = (t.tempoGanho || 0) + (t.tempoPerde || 0);
+  await updateDoc(doc(db, 'usuarios', filhoId), {
+    tempoDisponivel: increment(-total),
+    ultimaNotificacaoPai: {
+      texto: `❌ ${currentUser.nome} reprovou a tarefa: "${t.titulo}"`,
+      ts: new Date().getTime()
+    }
+  });
+  await addDoc(collection(db, 'historico'), {
+    familiaId: currentFamiliaId,
+    filhoId,
+    tipo: 'tarefa',
+    descricao: `Tarefa reprovada por ${currentUser.nome}: "${t.titulo}"`,
+    tempo: -total,
+    criadoEm: serverTimestamp()
+  });
+  const nomeFilho = filhosData[filhoId]?.nome || 'Filho';
+  toast(`Tarefa de ${nomeFilho} reprovada. -${formatarMin(total)} descontados.`);
+};
 
 // ── RENDER: PEDIDOS ──
 function renderPedidos(pedidos) {
@@ -1761,6 +1793,12 @@ window.criarTarefa = async function() {
     criadoEm: serverTimestamp(),
     statusHoje: {}
   });
+  await updateDoc(doc(db, 'usuarios', filhoId), {
+    ultimaNotificacaoPai: {
+      texto: `📋 ${currentUser.nome} criou uma nova tarefa: "${titulo}"`,
+      ts: new Date().getTime()
+    }
+  });
   fecharModal('modal-nova-tarefa');
   document.getElementById('tarefa-titulo').value = '';
   toast('Tarefa criada! ✅');
@@ -1808,7 +1846,7 @@ setInterval(() => {
     if (!el) return;
     const tempoSeg = calcTempoAtual(f);
     el.textContent = formatarTempo(tempoSeg);
-    el.className = `tempo-valor ${tempoSeg > 300 ? 'positivo' : tempoSeg <= 0 ? 'zero' : 'negativo'}`;
+    el.className = `tempo-valor ${tempoSeg > 600 ? 'positivo' : tempoSeg > 300 ? 'baixo' : tempoSeg <= 0 ? 'zero' : 'negativo'}`;
   });
 }, 1000);
 </script>

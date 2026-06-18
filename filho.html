@@ -535,7 +535,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--purple); }
       </div>
     </div>
     <div style="display:flex;align-items:center;gap:6px">
-      <span style="font-size:10px;color:var(--text3);font-weight:500">v0.17</span>
+      <span style="font-size:10px;color:var(--text3);font-weight:500">v0.23</span>
       <button class="icon-btn" onclick="fazerLogout()" title="Sair" style="display:flex;align-items:center;justify-content:center">
   <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
     <path d="M5 3C3.9 3 3 3.9 3 5v14c0 1.1.9 2 2 2h7v-2H5V5h7V3H5z"/>
@@ -755,10 +755,13 @@ input:focus, select:focus, textarea:focus { border-color: var(--purple); }
     <div class="modal-handle"></div>
     <div class="modal-title">Confirmar tarefa</div>
     <input type="hidden" id="confirmar-tarefa-id">
+    <input type="hidden" id="confirmar-tarefa-titulo">
+    <input type="hidden" id="confirmar-tarefa-perde">
+    <input type="hidden" id="confirmar-tarefa-ganho">
     <div id="confirmar-tarefa-info" style="margin-bottom:16px"></div>
     <p style="font-size:14px;color:var(--text2);margin-bottom:16px">Você cumpriu esta tarefa hoje?</p>
     <div class="modal-actions">
-      <button class="btn-full btn-gray" onclick="fecharModal('modal-confirmar-tarefa')">Cancelar</button>
+      <button class="btn-full btn-red" onclick="naoFizTarefa()">❌ Não fiz</button>
       <button class="btn-full" style="background:var(--purple);color:#fff" onclick="confirmarTarefaCumprida()">✅ Sim, cumpri!</button>
     </div>
   </div>
@@ -898,10 +901,36 @@ function iniciarListeners() {
     collection(db, 'tarefas_diarias'),
     where('filhoId', '==', currentUser.uid)
   );
+  let tarefasCarregadoInicial = false;
+  let tarefasIdsConhecidos = new Set();
+  let tarefasStatusConhecido = {};
   const u3 = onSnapshot(tarefaQ, snap => {
     const tarefas = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     renderTarefas(tarefas);
     renderTarefasResumo(tarefas);
+    const hj = new Date().toDateString();
+    if (!tarefasCarregadoInicial) {
+      tarefas.forEach(t => {
+        tarefasIdsConhecidos.add(t.id);
+        tarefasStatusConhecido[t.id] = t.statusHoje?.[hj];
+      });
+      tarefasCarregadoInicial = true;
+    } else {
+      tarefas.forEach(t => {
+        if (!tarefasIdsConhecidos.has(t.id)) {
+          tarefasIdsConhecidos.add(t.id);
+          tarefasStatusConhecido[t.id] = t.statusHoje?.[hj];
+          toast(`📋 Nova tarefa: "${t.titulo}"`);
+        } else {
+          const statusAnterior = tarefasStatusConhecido[t.id];
+          const statusAtual = t.statusHoje?.[hj];
+          tarefasStatusConhecido[t.id] = statusAtual;
+          if (statusAnterior === 'cumprida' && statusAtual === 'nao_cumprida') {
+            mostrarPerda(-(t.tempoGanho || 0) - (t.tempoPerde || 0), `${nomeResponsavel} reprovou: "${t.titulo}"`);
+          }
+        }
+      });
+    }
   });
   unsubscribers.push(u3);
 
@@ -1027,11 +1056,11 @@ function atualizarTimerUI() {
 
   const tempoStr = formatarTempo(tempoSeg);
   valEl.textContent = tempoStr;
-  valEl.className = `tempo-hero-valor ${tempoSeg > 300 ? 'positivo' : tempoSeg > 0 ? 'baixo' : 'negativo'}`;
+  valEl.className = `tempo-hero-valor ${tempoSeg > 600 ? 'positivo' : tempoSeg > 300 ? 'baixo' : 'negativo'}`;
 
   // Topbar sempre mostra o tempo com cor dinâmica
   topbarTempo.textContent = tempoStr;
-  topbarTempo.style.color = tempoSeg > 300 ? 'var(--green)' : tempoSeg > 0 ? 'var(--yellow)' : 'var(--red)';
+  topbarTempo.style.color = tempoSeg > 600 ? 'var(--green)' : tempoSeg > 300 ? 'var(--yellow)' : 'var(--red)';
 
   if (rodando) {
     statusEl.className = 'timer-status rodando';
@@ -1366,7 +1395,7 @@ function renderTarefas(tarefas) {
     const emoji = status === 'cumprida' ? '✅' : status === 'nao_cumprida' ? '❌' : '⭕';
     return `
     <div class="tarefa-item">
-      <div class="tarefa-check ${status}" onclick="abrirConfirmarTarefa('${t.id}','${t.titulo}',${t.tempoGanho})">
+      <div class="tarefa-check ${status}" onclick="abrirConfirmarTarefa('${t.id}','${t.titulo}',${t.tempoGanho},${t.tempoPerde})">
         ${emoji}
       </div>
       <div class="tarefa-info">
@@ -1377,39 +1406,86 @@ function renderTarefas(tarefas) {
           <span style="color:var(--red)">-${formatarMin(t.tempoPerde)}</span>
         </div>
       </div>
-      ${status === 'pendente' ? `<button class="btn-small btn-blue" onclick="abrirConfirmarTarefa('${t.id}','${t.titulo}',${t.tempoGanho})">Feita!</button>` : ''}
+      ${status === 'pendente' ? `<button class="btn-small btn-blue" onclick="abrirConfirmarTarefa('${t.id}','${t.titulo}',${t.tempoGanho},${t.tempoPerde})">Feita!</button>` : ''}
     </div>`;
   }).join('');
 }
 
-window.abrirConfirmarTarefa = function(id, titulo, ganho) {
+window.abrirConfirmarTarefa = function(id, titulo, ganho, perde) {
   const status = document.querySelector(`[onclick*="'${id}'"]`)?.closest('.tarefa-item')?.querySelector('.tarefa-check')?.className;
   if (status?.includes('cumprida')) return;
   document.getElementById('confirmar-tarefa-id').value = id;
+  document.getElementById('confirmar-tarefa-titulo').value = titulo;
+  document.getElementById('confirmar-tarefa-perde').value = perde || 0;
+  document.getElementById('confirmar-tarefa-ganho').value = ganho || 0;
   document.getElementById('confirmar-tarefa-info').innerHTML = `
     <div style="background:var(--bg);border-radius:10px;padding:12px;border:1px solid var(--border)">
       <div style="font-size:14px;font-weight:600;margin-bottom:4px">${titulo}</div>
-      <div style="font-size:13px;color:var(--green)">+${formatarMin(ganho)} se confirmado por ${nomeResponsavel}</div>
+      <div style="display:flex;gap:16px;margin-top:4px">
+        <span style="font-size:13px;color:var(--green)">✅ +${formatarMin(ganho)} se cumpriu</span>
+        <span style="font-size:13px;color:var(--red)">❌ -${formatarMin(perde)} se não cumpriu</span>
+      </div>
     </div>`;
   abrirModal('modal-confirmar-tarefa');
 };
 
-window.confirmarTarefaCumprida = async function() {
+window.naoFizTarefa = async function() {
   const id = document.getElementById('confirmar-tarefa-id').value;
+  const titulo = document.getElementById('confirmar-tarefa-titulo').value;
+  const perde = parseInt(document.getElementById('confirmar-tarefa-perde').value) || 0;
   const field = `statusHoje.${hoje}`;
-  await updateDoc(doc(db, 'tarefas_diarias', id), { [field]: 'cumprida' });
-  await addDoc(collection(db, 'notificacoes'), {
-    destinatarioTipo: 'pai',
-    familiaId: currentUser.familiaId,
-    filhoId: currentUser.uid,
-    filhoNome: currentUser.nome,
-    tipo: 'tarefa_cumprida',
-    tarefaId: id,
-    lida: false,
-    criadoEm: serverTimestamp()
+  await updateDoc(doc(db, 'tarefas_diarias', id), { [field]: 'nao_cumprida' });
+  if (perde > 0) {
+    await updateDoc(doc(db, 'usuarios', currentUser.uid), {
+      tempoDisponivel: increment(-perde)
+    });
+    await addDoc(collection(db, 'historico'), {
+      familiaId: currentUser.familiaId,
+      filhoId: currentUser.uid,
+      tipo: 'tarefa',
+      descricao: `Tarefa não cumprida: "${titulo}"`,
+      tempo: -perde,
+      criadoEm: serverTimestamp()
+    });
+  }
+  await updateDoc(doc(db, 'usuarios', currentUser.uid), {
+    ultimaNotificacaoFilho: {
+      texto: `❌ ${currentUser.nome} não fez a tarefa: "${titulo}"`,
+      ts: new Date().getTime()
+    }
   });
   fecharModal('modal-confirmar-tarefa');
-  toast(`Aviso enviado para ${nomeResponsavel}! ✅`);
+  const min = Math.round(perde / 60);
+  toast(perde > 0 ? `-${min}min descontados por não fazer a tarefa` : 'Tarefa marcada como não cumprida');
+};
+
+window.confirmarTarefaCumprida = async function() {
+  const id = document.getElementById('confirmar-tarefa-id').value;
+  const titulo = document.getElementById('confirmar-tarefa-titulo').value;
+  const ganho = parseInt(document.getElementById('confirmar-tarefa-ganho').value) || 0;
+  const field = `statusHoje.${hoje}`;
+  await updateDoc(doc(db, 'tarefas_diarias', id), { [field]: 'cumprida' });
+  if (ganho > 0) {
+    await updateDoc(doc(db, 'usuarios', currentUser.uid), {
+      tempoDisponivel: increment(ganho)
+    });
+    await addDoc(collection(db, 'historico'), {
+      familiaId: currentUser.familiaId,
+      filhoId: currentUser.uid,
+      tipo: 'tarefa',
+      descricao: `Tarefa cumprida: "${titulo}"`,
+      tempo: ganho,
+      criadoEm: serverTimestamp()
+    });
+  }
+  await updateDoc(doc(db, 'usuarios', currentUser.uid), {
+    ultimaNotificacaoFilho: {
+      texto: `✅ ${currentUser.nome} cumpriu a tarefa: "${titulo}"`,
+      ts: new Date().getTime()
+    }
+  });
+  fecharModal('modal-confirmar-tarefa');
+  toast(`+${formatarMin(ganho)} ganhos! Aviso enviado para ${nomeResponsavel} ✅`);
 };
 
 // ── PEDIDOS ──
@@ -1438,12 +1514,12 @@ function renderPedidos(pedidos) {
     container.innerHTML = `<div class="empty-state"><div class="empty-icon">📬</div><div class="empty-title">Nenhum pedido</div><div class="empty-desc">Faça um pedido de tempo extra para seus pais.</div></div>`;
     return;
   }
-  const statusLabel = { pendente: '⏳ Aguardando', aprovado: '✅ Aprovado', reprovado: '❌ Negado' };
-  const statusBadge = { pendente: 'badge-pendente', aprovado: 'badge-aprovada', reprovado: 'badge-reprovada' };
+  const statusLabel = { pendente: '⏳ Aguardando', aprovado: '✅ Aprovado', negado: '❌ Negado' };
+  const statusBadge = { pendente: 'badge-pendente', aprovado: 'badge-aprovada', negado: 'badge-reprovada' };
   container.innerHTML = pedidos.map(p => `
     <div class="pedido-card">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
-        <div style="font-size:14px;font-weight:600;flex:1">${p.motivo}</div>
+        <div style="font-size:14px;font-weight:600;flex:1">${p.motivo || '(sem justificativa)'}</div>
         <span class="badge ${statusBadge[p.status] || 'badge-pendente'}">${statusLabel[p.status] || p.status}</span>
       </div>
       <div style="font-size:13px;color:var(--text2)">Pedindo: <span style="color:var(--purple);font-weight:600">${formatarMin(p.tempoPedido)}</span></div>
