@@ -309,6 +309,7 @@ body {
   border: 1px solid var(--border);
   padding: 14px;
   margin-bottom: 10px;
+  position: relative;
 }
 .missao-header {
   display: flex;
@@ -552,9 +553,8 @@ select option { background: var(--surface); }
       </div>
     </div>
     <div class="topbar-right">
-      <span style="font-size:10px;color:var(--text3);font-weight:500">v0.01</span>
-      <button class="icon-btn notif-badge" id="btn-notif" onclick="abrirModal('modal-notif')" title="Notificações">🔔</button>
-      <button class="icon-btn" onclick="fazerLogout()" title="Sair" style="display:flex;align-items:center;justify-content:center">
+      <span style="font-size:10px;color:var(--text3);font-weight:500">v0.14</span>
+<button class="icon-btn" onclick="fazerLogout()" title="Sair" style="display:flex;align-items:center;justify-content:center">
   <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
     <path d="M5 3C3.9 3 3 3.9 3 5v14c0 1.1.9 2 2 2h7v-2H5V5h7V3H5z"/>
     <path d="M16.5 8.5L15.09 9.91 17.17 12H9v2h8.17l-2.08 2.09L16.5 17.5 21 13l-4.5-4.5z"/>
@@ -616,17 +616,7 @@ select option { background: var(--surface); }
         </div>
       </div>
 
-      <!-- PÁGINA 4: BÔNUS E MULTAS -->
-      <div class="page" id="page-bonus">
-        <div class="section-header">
-          <div class="section-title">Bônus e Multas</div>
-        </div>
-        <div id="bonus-lista">
-          <div class="page-loading"><div class="spinner"></div></div>
-        </div>
-      </div>
-
-      <!-- PÁGINA 5: HISTÓRICO -->
+      <!-- PÁGINA 4: HISTÓRICO -->
       <div class="page" id="page-historico">
         <div class="section-header">
           <div class="section-title">Histórico</div>
@@ -654,15 +644,12 @@ select option { background: var(--surface); }
       <span class="nav-icon">✅</span>
       <span class="nav-label">Tarefas</span>
     </button>
-    <button class="nav-item" data-page="3" onclick="irParaPagina(3)">
+    <button class="nav-item" data-page="3" onclick="irParaPagina(3);limparBadgePedidos()">
       <span class="nav-icon">📬</span>
       <span class="nav-label">Pedidos</span>
+      <span class="nav-badge" id="badge-pedidos" style="display:none">!</span>
     </button>
     <button class="nav-item" data-page="4" onclick="irParaPagina(4)">
-      <span class="nav-icon">⭐</span>
-      <span class="nav-label">Bônus</span>
-    </button>
-    <button class="nav-item" data-page="5" onclick="irParaPagina(5)">
       <span class="nav-icon">📋</span>
       <span class="nav-label">Histórico</span>
     </button>
@@ -739,9 +726,9 @@ select option { background: var(--surface); }
 <div class="modal-overlay" id="modal-multa" onclick="fecharModal('modal-multa')">
   <div class="modal" onclick="event.stopPropagation()">
     <div class="modal-handle"></div>
-    <div class="modal-title">Multa — contador não ativado</div>
+    <div class="modal-title" id="modal-multa-titulo">Multa — contador não ativado</div>
     <input type="hidden" id="modal-multa-uid">
-    <p style="font-size:13px;color:var(--text2);margin-bottom:16px">O filho usou tela sem ligar o contador. Informe o tempo de uso e a multa adicional.</p>
+    <p id="modal-multa-desc" style="font-size:13px;color:var(--text2);margin-bottom:16px">O filho usou tela sem ligar o contador. Informe o tempo de uso e a multa adicional.</p>
     <div class="tempo-row">
       <div class="form-group">
         <label>Tempo usado (min)</label>
@@ -864,7 +851,10 @@ let currentUser = null;
 let currentFamiliaId = null;
 let currentUserId = null;
 let filhosData = {};
+let pedidosData = {};
 let unsubscribers = [];
+const ICON_RELANCAR = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10" stroke="#111" stroke-width="3.5"/><polyline points="23 4 23 10 17 10" stroke="#f97316" stroke-width="2"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" stroke="#111" stroke-width="3.5"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" stroke="#f97316" stroke-width="2"/></svg>`;
+const ICON_LIXEIRA = `<svg width="20" height="20" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><rect x="9.5" y="1.5" width="5" height="2.2" rx="1.1" fill="#64748b"/><rect x="2" y="4.2" width="20" height="2.8" rx="1.4" fill="#64748b"/><path d="M5.2 8.5h13.6L17.4 21.3C17.2 21.7 16.8 22 16.3 22H7.7C7.2 22 6.8 21.7 6.6 21.3Z" fill="#64748b"/><rect x="9.8" y="11.5" width="1.8" height="6.5" rx="0.9" fill="#1e293b"/><rect x="12.4" y="11.5" width="1.8" height="6.5" rx="0.9" fill="#1e293b"/></svg>`;
 
 // ── AUTH ──
 onAuthStateChanged(auth, async (user) => {
@@ -910,11 +900,16 @@ function iniciarListeners() {
         filhosData[filhoSnap.id] = dadosNovos;
         renderFilhos(Object.values(filhosData));
         preencherSelectFilhos();
-        // Detectar pedido de parada do filho
-        const tsNovo = dadosNovos.pedidoParadaEm?.seconds;
-        const tsAntigo = dadosAntigos?.pedidoParadaEm?.seconds;
-        if (tsNovo && tsNovo !== tsAntigo) {
-          toast(`⚠️ ${dadosNovos.nome} quer parar o contador!`);
+        // Detectar notificações do filho (só após carga inicial)
+        if (dadosAntigos) {
+          const tsParada = dadosNovos.pedidoParadaEm?.seconds;
+          if (tsParada && tsParada !== dadosAntigos.pedidoParadaEm?.seconds) {
+            toast(`⚠️ ${dadosNovos.nome} quer parar o contador!`);
+          }
+          const tsNotif = dadosNovos.ultimaNotificacaoFilho?.ts;
+          if (tsNotif && tsNotif !== dadosAntigos.ultimaNotificacaoFilho?.ts) {
+            toast(dadosNovos.ultimaNotificacaoFilho.texto);
+          }
         }
       });
       filhoListeners.push(unsub);
@@ -980,6 +975,31 @@ function iniciarListeners() {
     renderTarefas(tarefas);
   });
   unsubscribers.push(u3);
+
+  // Pedidos
+  let pedidosCarregadoInicial = false;
+  let pedidosIdsConhecidos = new Set();
+  const pedidoQ = query(collection(db, 'pedidos'), where('familiaId', '==', currentFamiliaId));
+  const uPed = onSnapshot(pedidoQ, snap => {
+    const pedidos = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => (b.criadoEm?.seconds || 0) - (a.criadoEm?.seconds || 0));
+    pedidos.forEach(p => { pedidosData[p.id] = p; });
+    renderPedidos(pedidos);
+    if (!pedidosCarregadoInicial) {
+      pedidos.forEach(p => pedidosIdsConhecidos.add(p.id));
+      pedidosCarregadoInicial = true;
+    } else {
+      pedidos.forEach(p => {
+        if (!pedidosIdsConhecidos.has(p.id)) {
+          pedidosIdsConhecidos.add(p.id);
+          const filho = filhosData[p.filhoId];
+          const nome = filho ? filho.nome : p.filhoNome || 'Filho';
+          notificarPedido(`📬 ${nome} está pedindo ${formatarMin(p.tempoPedido)} de tempo extra`);
+        }
+      });
+    }
+  });
+  unsubscribers.push(uPed);
 
   // Histórico
   const histQ = query(
@@ -1113,7 +1133,7 @@ function renderMissoes(missoes) {
         </div>
         <div style="display:flex;align-items:center;gap:6px">
           <span class="badge ${badgeMap[m.status] || 'badge-pendente'}">${label}</span>
-          ${resolvido ? `<button onclick="apagarMissao('${m.id}')" style="background:none;border:none;cursor:pointer;font-size:18px;color:var(--text3);padding:2px 4px" title="Apagar">🗑️</button>` : ''}
+          ${resolvido ? `<button onclick="apagarMissao('${m.id}')" style="background:none;border:none;cursor:pointer;padding:0;line-height:1;display:flex" title="Apagar">${ICON_LIXEIRA}</button>` : ''}
         </div>
       </div>
       ${m.descricao ? `<p style="font-size:13px;color:var(--text2);margin-bottom:8px">${m.descricao}</p>` : ''}
@@ -1130,6 +1150,7 @@ function renderMissoes(missoes) {
       <div class="missao-actions">
         <button class="btn-small btn-blue" style="flex:1" onclick="abrirConfirmarMissao('${m.id}')">Confirmar resultado</button>
       </div>` : ''}
+      ${resolvido ? `<button onclick="relançarMissao('${m.id}')" style="position:absolute;bottom:14px;right:14px;background:none;border:none;cursor:pointer;padding:0;line-height:1;display:flex" title="Lançar novamente">${ICON_RELANCAR}</button>` : ''}
     </div>`;
   }).join('');
 }
@@ -1164,6 +1185,103 @@ function renderTarefas(tarefas) {
     </div>`;
   }).join('');
 }
+
+// ── RENDER: PEDIDOS ──
+function renderPedidos(pedidos) {
+  const container = document.getElementById('pedidos-lista');
+  if (pedidos.length === 0) {
+    container.innerHTML = `<div class="empty-state"><div class="empty-icon">📬</div><div class="empty-title">Nenhum pedido</div><div class="empty-desc">Quando um filho pedir tempo extra, aparecerá aqui.</div></div>`;
+    return;
+  }
+  const statusLabel = { pendente: '⏳ Aguardando', aprovado: '✅ Aprovado', negado: '❌ Negado' };
+  const statusBadge = { pendente: 'badge-pendente', aprovado: 'badge-aprovada', negado: 'badge-reprovada' };
+  const finalizado = new Set(['aprovado', 'negado']);
+  const ocultos = getPedidosOcultos();
+  container.innerHTML = pedidos.filter(p => !ocultos.has(p.id)).map(p => {
+    const filho = filhosData[p.filhoId];
+    const nomeFilho = filho ? filho.nome : p.filhoNome || '?';
+    const resolvido = finalizado.has(p.status);
+    return `
+    <div class="missao-card" data-pedido-id="${p.id}">
+      <div class="missao-header">
+        <div style="flex:1">
+          <div class="missao-titulo">${p.motivo || '(sem justificativa)'}</div>
+          <div class="missao-filho">De: ${nomeFilho} · <span style="color:var(--purple);font-weight:700">${formatarMin(p.tempoPedido)}</span> · ${formatarData(p.criadoEm)}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px">
+          <span class="badge ${statusBadge[p.status] || 'badge-pendente'}">${statusLabel[p.status] || p.status}</span>
+          ${resolvido ? `<button onclick="apagarPedido('${p.id}')" style="background:none;border:none;cursor:pointer;padding:0;line-height:1;display:flex" title="Apagar">${ICON_LIXEIRA}</button>` : ''}
+        </div>
+      </div>
+      ${p.status === 'pendente' ? `
+      <div class="missao-actions" style="margin-top:10px">
+        <button class="btn-small btn-red" style="flex:1" onclick="negarPedido('${p.id}')">❌ Negar</button>
+        <button class="btn-small btn-green" style="flex:1" onclick="aprovarPedido('${p.id}')">✅ Aprovar</button>
+      </div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+window.aprovarPedido = async function(pedidoId) {
+  const p = pedidosData[pedidoId];
+  if (!p) return;
+  await updateDoc(doc(db, 'pedidos', pedidoId), { status: 'aprovado' });
+  await updateDoc(doc(db, 'usuarios', p.filhoId), {
+    tempoDisponivel: increment(p.tempoPedido),
+    ultimaNotificacaoPai: {
+      texto: `✅ ${currentUser.nome} aprovou seu pedido de ${formatarMin(p.tempoPedido)}!`,
+      ts: new Date().getTime()
+    }
+  });
+  await addDoc(collection(db, 'historico'), {
+    familiaId: currentFamiliaId,
+    filhoId: p.filhoId,
+    tipo: 'pedido',
+    descricao: `Pedido aprovado por ${currentUser.nome}: +${formatarMin(p.tempoPedido)}`,
+    tempo: p.tempoPedido,
+    criadoEm: serverTimestamp()
+  });
+  const nome = filhosData[p.filhoId]?.nome || p.filhoNome || 'Filho';
+  toast(`Pedido de ${nome} aprovado! +${formatarMin(p.tempoPedido)}`);
+};
+
+window.negarPedido = async function(pedidoId) {
+  const p = pedidosData[pedidoId];
+  if (!p) return;
+  await updateDoc(doc(db, 'pedidos', pedidoId), { status: 'negado' });
+  await updateDoc(doc(db, 'usuarios', p.filhoId), {
+    ultimaNotificacaoPai: {
+      texto: `❌ ${currentUser.nome} negou seu pedido de ${formatarMin(p.tempoPedido)}`,
+      ts: new Date().getTime()
+    }
+  });
+  const nome = filhosData[p.filhoId]?.nome || p.filhoNome || 'Filho';
+  toast(`Pedido de ${nome} negado`);
+};
+
+function getPedidosOcultos() {
+  return new Set(JSON.parse(localStorage.getItem(`pedidos_ocultos_${currentUserId}`) || '[]'));
+}
+window.apagarPedido = function(pedidoId) {
+  const ocultos = getPedidosOcultos();
+  ocultos.add(pedidoId);
+  localStorage.setItem(`pedidos_ocultos_${currentUserId}`, JSON.stringify([...ocultos]));
+  document.querySelector(`[data-pedido-id="${pedidoId}"]`)?.remove();
+  toast('Pedido removido 🗑️');
+};
+
+let badgePedidoCount = 0;
+function notificarPedido(msg) {
+  badgePedidoCount++;
+  const el = document.getElementById('badge-pedidos');
+  el.textContent = badgePedidoCount > 9 ? '9+' : badgePedidoCount;
+  el.style.display = 'flex';
+  toast(msg);
+}
+window.limparBadgePedidos = function() {
+  badgePedidoCount = 0;
+  document.getElementById('badge-pedidos').style.display = 'none';
+};
 
 // ── RENDER: HISTÓRICO ──
 function renderHistorico(hist) {
@@ -1206,7 +1324,7 @@ function formatarMin(seg) {
 
 // ── NAVEGAÇÃO ──
 let paginaAtual = 0;
-const TOTAL_PAGINAS = 6;
+const TOTAL_PAGINAS = 5;
 
 window.irParaPagina = function(n) {
   paginaAtual = n;
@@ -1289,6 +1407,8 @@ window.abrirRemTempo = function(uid, nome) {
 
 window.abrirMulta = function(uid, nome) {
   document.getElementById('modal-multa-uid').value = uid;
+  document.getElementById('modal-multa-titulo').textContent = `Multa — ${nome}`;
+  document.getElementById('modal-multa-desc').textContent = `${nome} usou tela sem ligar o contador. Informe o tempo de uso e a multa adicional.`;
   document.getElementById('multa-uso-min').value = '';
   document.getElementById('multa-extra-min').value = '';
   abrirModal('modal-multa');
@@ -1296,8 +1416,18 @@ window.abrirMulta = function(uid, nome) {
 
 window.toggleBloqueio = async function(uid, bloqueado) {
   const estaBloqueado = bloqueado === 'true' || bloqueado === true;
-  await updateDoc(doc(db, 'usuarios', uid), { timerBloqueado: !estaBloqueado });
-  toast(!estaBloqueado ? '🔒 Filho não pode parar o contador' : '🔓 Filho pode parar o contador');
+  const novoEstado = !estaBloqueado;
+  await updateDoc(doc(db, 'usuarios', uid), {
+    timerBloqueado: novoEstado,
+    ultimaNotificacaoPai: {
+      texto: novoEstado
+        ? `🔒 ${currentUser.nome} bloqueou o contador — você não pode pausá-lo`
+        : `🔓 ${currentUser.nome} liberou o contador — agora você pode pausá-lo`,
+      ts: new Date().getTime()
+    }
+  });
+  const nomeFilho = filhosData[uid]?.nome || 'Filho';
+  toast(novoEstado ? `🔒 ${nomeFilho} não pode parar o contador` : `🔓 ${nomeFilho} pode parar o contador`);
 };
 
 window.congelarTimer = async function(uid, rodando) {
@@ -1310,15 +1440,23 @@ window.congelarTimer = async function(uid, rodando) {
     await updateDoc(doc(db, 'usuarios', uid), {
       timerRodando: false,
       timerInicio: null,
-      tempoDisponivel: tempoAtual
+      tempoDisponivel: tempoAtual,
+      ultimaNotificacaoPai: {
+        texto: `⏹ ${currentUser.nome} pausou seu contador de tempo de tela`,
+        ts: new Date().getTime()
+      }
     });
-    toast('Timer pausado');
+    toast(`Timer de ${filho.nome} pausado`);
   } else {
     await updateDoc(doc(db, 'usuarios', uid), {
       timerRodando: true,
-      timerInicio: serverTimestamp()
+      timerInicio: serverTimestamp(),
+      ultimaNotificacaoPai: {
+        texto: `▶ ${currentUser.nome} iniciou seu contador de tempo de tela`,
+        ts: new Date().getTime()
+      }
     });
-    toast('Timer iniciado');
+    toast(`Timer de ${filho.nome} iniciado`);
   }
 };
 
@@ -1461,6 +1599,19 @@ window.responderSugestao = async function(missaoId, acao) {
     status: acao === 'aceitar' ? 'aceita' : 'recusada'
   });
   toast(acao === 'aceitar' ? 'Missão aceita! O filho será notificado 💪' : 'Sugestão recusada');
+};
+
+window.relançarMissao = async function(missaoId) {
+  const snap = await getDoc(doc(db, 'missoes', missaoId));
+  if (!snap.exists()) return;
+  const m = snap.data();
+  preencherSelectFilhos();
+  document.getElementById('missao-filho-sel').value = m.filhoId;
+  document.getElementById('missao-titulo').value = m.titulo;
+  document.getElementById('missao-desc').value = m.descricao || '';
+  document.getElementById('missao-ganho').value = m.tempoGanho ? Math.round(m.tempoGanho / 60) : '';
+  document.getElementById('missao-perde').value = m.tempoPerde ? Math.round(m.tempoPerde / 60) : '';
+  abrirModal('modal-nova-missao');
 };
 
 window.apagarMissao = function(missaoId) {

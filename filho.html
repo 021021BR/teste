@@ -234,6 +234,7 @@ body {
   border: 1px solid var(--border);
   padding: 14px;
   margin-bottom: 10px;
+  position: relative;
 }
 .missao-header {
   display: flex; align-items: flex-start;
@@ -493,7 +494,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--purple); }
       </div>
     </div>
     <div style="display:flex;align-items:center;gap:6px">
-      <span style="font-size:10px;color:var(--text3);font-weight:500">v0.01</span>
+      <span style="font-size:10px;color:var(--text3);font-weight:500">v0.14</span>
       <button class="icon-btn" onclick="fazerLogout()" title="Sair" style="display:flex;align-items:center;justify-content:center">
   <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
     <path d="M5 3C3.9 3 3 3.9 3 5v14c0 1.1.9 2 2 2h7v-2H5V5h7V3H5z"/>
@@ -732,6 +733,8 @@ let filhoData = null;
 let timerInterval = null;
 let unsubscribers = [];
 let nomeResponsavel = 'seu responsável';
+const ICON_RELANCAR = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10" stroke="#111" stroke-width="3.5"/><polyline points="23 4 23 10 17 10" stroke="#f97316" stroke-width="2"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" stroke="#111" stroke-width="3.5"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" stroke="#f97316" stroke-width="2"/></svg>`;
+const ICON_LIXEIRA = `<svg width="20" height="20" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><rect x="9.5" y="1.5" width="5" height="2.2" rx="1.1" fill="#64748b"/><rect x="2" y="4.2" width="20" height="2.8" rx="1.4" fill="#64748b"/><path d="M5.2 8.5h13.6L17.4 21.3C17.2 21.7 16.8 22 16.3 22H7.7C7.2 22 6.8 21.7 6.6 21.3Z" fill="#64748b"/><rect x="9.8" y="11.5" width="1.8" height="6.5" rx="0.9" fill="#1e293b"/><rect x="12.4" y="11.5" width="1.8" height="6.5" rx="0.9" fill="#1e293b"/></svg>`;
 
 // ── AUTH ──
 onAuthStateChanged(auth, async (user) => {
@@ -759,10 +762,17 @@ onAuthStateChanged(auth, async (user) => {
 
 function iniciarListeners() {
   // Dados do filho em tempo real
+  let ultimaNotifTs = null;
   const u1 = onSnapshot(doc(db, 'usuarios', currentUser.uid), snap => {
     if (!snap.exists()) return;
     filhoData = { uid: snap.id, ...snap.data() };
     atualizarTimerUI();
+    // Notificações do pai
+    const notif = filhoData.ultimaNotificacaoPai;
+    if (notif && notif.ts !== ultimaNotifTs) {
+      if (ultimaNotifTs !== null) toast(notif.texto);
+      ultimaNotifTs = notif.ts;
+    }
   });
   unsubscribers.push(u1);
 
@@ -830,14 +840,29 @@ function iniciarListeners() {
   unsubscribers.push(u3);
 
   // Pedidos
-  const pedidoQ = query(
-    collection(db, 'pedidos'),
-    where('filhoId', '==', currentUser.uid)
-  );
+  let pedidosCarregadoInicial = false;
+  let pedidosStatusConhecido = {};
+  const pedidoQ = query(collection(db, 'pedidos'), where('filhoId', '==', currentUser.uid));
   const u4 = onSnapshot(pedidoQ, snap => {
     const pedidos = snap.docs.map(d => ({ id: d.id, ...d.data() }))
       .sort((a, b) => (b.criadoEm?.seconds || 0) - (a.criadoEm?.seconds || 0));
     renderPedidos(pedidos);
+    if (!pedidosCarregadoInicial) {
+      pedidos.forEach(p => { pedidosStatusConhecido[p.id] = p.status; });
+      pedidosCarregadoInicial = true;
+    } else {
+      pedidos.forEach(p => {
+        const anterior = pedidosStatusConhecido[p.id];
+        pedidosStatusConhecido[p.id] = p.status;
+        if (anterior && anterior !== p.status) {
+          if (p.status === 'aprovado') {
+            mostrarCelebracao(p.tempoPedido, `${nomeResponsavel} aprovou seu pedido! 🎉`);
+          } else if (p.status === 'negado') {
+            mostrarPerda(0, `${nomeResponsavel} negou seu pedido de ${formatarMin(p.tempoPedido)}`);
+          }
+        }
+      });
+    }
   });
   unsubscribers.push(u4);
 
@@ -1029,7 +1054,11 @@ window.toggleTimer = async function() {
       timerInicio: null,
       timerIniciadoPor: null,
       pedidoParada: false,
-      tempoDisponivel: tempoAtual
+      tempoDisponivel: tempoAtual,
+      ultimaNotificacaoFilho: {
+        texto: `⏸ ${currentUser.nome} pausou o contador`,
+        ts: new Date().getTime()
+      }
     });
     await addDoc(collection(db, 'historico'), {
       familiaId: currentUser.familiaId,
@@ -1048,7 +1077,11 @@ window.toggleTimer = async function() {
       timerRodando: true,
       timerInicio: serverTimestamp(),
       timerIniciadoPor: 'filho',
-      pedidoParada: false
+      pedidoParada: false,
+      ultimaNotificacaoFilho: {
+        texto: `▶ ${currentUser.nome} iniciou o contador`,
+        ts: new Date().getTime()
+      }
     });
     toast('Timer iniciado ▶');
   }
@@ -1107,7 +1140,7 @@ function renderMissoes(missoes) {
         </div>
         <div style="display:flex;align-items:center;gap:6px">
           <span class="badge ${badgeMap[m.status] || 'badge-pendente'}">${labelMap[m.status] || m.status}</span>
-          ${resolvido ? `<button onclick="apagarMissao('${m.id}')" style="background:none;border:none;cursor:pointer;font-size:18px;color:var(--text3);padding:2px 4px" title="Apagar">🗑️</button>` : ''}
+          ${resolvido ? `<button onclick="apagarMissao('${m.id}')" style="background:none;border:none;cursor:pointer;padding:0;line-height:1;display:flex" title="Apagar">${ICON_LIXEIRA}</button>` : ''}
         </div>
       </div>
       ${m.descricao ? `<div class="missao-desc">${m.descricao}</div>` : ''}
@@ -1125,6 +1158,7 @@ function renderMissoes(missoes) {
         <button class="btn-small btn-red" style="flex:1" onclick="naoCumprirMissao('${m.id}')">❌ Não cumpri</button>
         <button class="btn-small btn-green" style="flex:1" onclick="cumprirMissao('${m.id}')">✅ Cumpri!</button>
       </div>` : ''}
+      ${resolvido ? `<button onclick="sugerirNovamente('${m.id}')" style="position:absolute;bottom:14px;right:14px;background:none;border:none;cursor:pointer;padding:0;line-height:1;display:flex" title="Sugerir novamente">${ICON_RELANCAR}</button>` : ''}
     </div>`;
   }).join('');
 }
@@ -1169,6 +1203,17 @@ function salvarMissaoOculta(missaoId) {
   ocultas.add(missaoId);
   localStorage.setItem(`missoes_ocultas_${currentUser.uid}`, JSON.stringify([...ocultas]));
 }
+
+window.sugerirNovamente = async function(missaoId) {
+  const snap = await getDoc(doc(db, 'missoes', missaoId));
+  if (!snap.exists()) return;
+  const m = snap.data();
+  document.getElementById('sug-titulo').value = m.titulo;
+  document.getElementById('sug-desc').value = m.descricao || '';
+  document.getElementById('sug-ganho').value = m.tempoGanho ? Math.round(m.tempoGanho / 60) : '';
+  document.getElementById('sug-perde').value = m.tempoPerde ? Math.round(m.tempoPerde / 60) : '';
+  abrirModal('modal-sugerir-missao');
+};
 
 window.apagarMissao = function(missaoId) {
   salvarMissaoOculta(missaoId);
@@ -1284,7 +1329,7 @@ window.confirmarTarefaCumprida = async function() {
 window.enviarPedido = async function() {
   const motivo = document.getElementById('pedido-motivo').value.trim();
   const min = parseInt(document.getElementById('pedido-min').value);
-  if (!motivo || !min) return toast('Preencha todos os campos');
+  if (!min) return toast('Informe o tempo que está pedindo');
   await addDoc(collection(db, 'pedidos'), {
     familiaId: currentUser.familiaId,
     filhoId: currentUser.uid,
